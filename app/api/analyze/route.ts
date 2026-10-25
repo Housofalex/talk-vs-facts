@@ -7,6 +7,12 @@ type Prediction = {
   quote: string;
 };
 
+type Verdict = {
+  index: number;
+  verdict: string;
+  reasoning: string;
+};
+
 export async function POST(req: Request) {
   const { url } = await req.json();
 
@@ -33,7 +39,7 @@ export async function POST(req: Request) {
     return Response.json(extracted, { status: 500 });
   }
 
-  const results = await Promise.all(
+  const checked = await Promise.all(
     extracted.predictions.map(async (p: Prediction) => {
       const checkRes = await fetch(new URL("/api/check", req.url), {
         method: "POST",
@@ -51,8 +57,35 @@ export async function POST(req: Request) {
     })
   );
 
-  const finished = results.filter((r) => r.status === "correct" || r.status === "wrong");
-  const correct = results.filter((r) => r.status === "correct").length;
+  let trust_score = null;
+  let summary = null;
+  let results = checked.map((r) => ({ ...r, verdict: r.status, reasoning: null }));
+
+  if (checked.length > 0) {
+    const judgeRes = await fetch(new URL("/api/judge", req.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: video.title,
+        channel: video.channel,
+        video_date,
+        results: checked,
+      }),
+    });
+    const judged = await judgeRes.json();
+
+    if (judged.verdicts) {
+      trust_score = judged.trust_score;
+      summary = judged.summary;
+      results = checked.map((r, i) => {
+        const v = judged.verdicts.find((x: Verdict) => x.index === i);
+        return { ...r, verdict: v?.verdict ?? r.status, reasoning: v?.reasoning ?? null };
+      });
+    }
+  }
+
+  const finished = results.filter((r) => r.verdict === "correct" || r.verdict === "wrong");
+  const correct = results.filter((r) => r.verdict === "correct").length;
   const hit_rate = finished.length > 0 ? Math.round((correct / finished.length) * 100) : null;
 
   return Response.json({
@@ -60,6 +93,8 @@ export async function POST(req: Request) {
     channel: video.channel,
     video_date,
     hit_rate,
+    trust_score,
+    summary,
     total: results.length,
     correct,
     results,
