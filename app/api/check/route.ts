@@ -27,18 +27,23 @@ export async function POST(req: Request) {
     const lowest = Math.min(...quotes.map((q) => q.low ?? q.close!));
 
     let hit = false;
+    let alreadyTrue = false;
     if (target_price != null) {
       hit = direction === "up" ? highest >= target_price : lowest <= target_price;
+      alreadyTrue = direction === "up" ? startPrice >= target_price : startPrice <= target_price;
     } else {
       hit = direction === "up" ? endPrice > startPrice : endPrice < startPrice;
     }
 
     let status = "wrong";
-    if (hit) status = "correct";
+    if (alreadyTrue) status = "already_true";
+    else if (hit) status = "correct";
+    else if (!deadline) status = "no_deadline";
     else if (deadlineDate > today) status = "pending";
 
     return Response.json({ symbol, status, startPrice, endPrice, highest, lowest, target_price });
   } catch (err) {
+    console.error(err);
     return Response.json({ error: String(err) }, { status: 500 });
   }
 }
