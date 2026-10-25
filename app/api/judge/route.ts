@@ -17,7 +17,7 @@ For each prediction decide the final verdict:
 Check if a time frame is really in the quote. If not, use "no_deadline".
 Trust the price numbers, they are real market data.
 Write a short reasoning for each verdict (1 to 2 sentences, plain English, mention the real prices).
-Then give the creator a trust_score from 0 to 100 based only on these predictions, and a one sentence summary.
+Then give the creator a trust_score from 0 to 100 based only on predictions with verdict "correct" or "wrong". If there are none, trust_score must be null. Also give a one sentence summary.
 Return ONLY JSON in this format:
 {"verdicts":[{"index":0,"verdict":"correct","reasoning":"..."}],"trust_score":50,"summary":"..."}`;
 
