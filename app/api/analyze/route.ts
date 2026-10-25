@@ -8,13 +8,24 @@ type Prediction = {
 };
 
 export async function POST(req: Request) {
-  const { transcript, video_date } = await req.json();
+  const { url } = await req.json();
+
+  const videoRes = await fetch(new URL("/api/transcript", req.url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  const video = await videoRes.json();
+  if (!video.transcript) {
+    return Response.json(video, { status: 500 });
+  }
+  const video_date = video.video_date;
 
   const extractRes = await fetch(new URL("/api/extract", req.url), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      transcript: `Video published on ${video_date}.\n\n${transcript}`,
+      transcript: `Video published on ${video_date}.\n\n${video.transcript}`,
     }),
   });
   const extracted = await extractRes.json();
@@ -44,5 +55,13 @@ export async function POST(req: Request) {
   const correct = results.filter((r) => r.status === "correct").length;
   const hit_rate = finished.length > 0 ? Math.round((correct / finished.length) * 100) : null;
 
-  return Response.json({ video_date, hit_rate, total: results.length, correct, results });
+  return Response.json({
+    title: video.title,
+    channel: video.channel,
+    video_date,
+    hit_rate,
+    total: results.length,
+    correct,
+    results,
+  });
 }

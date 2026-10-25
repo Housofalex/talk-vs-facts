@@ -35,7 +35,9 @@ export async function POST(req: Request) {
 
   try {
     return Response.json(JSON.parse(text.slice(start, end + 1)));
-  } catch {
+    } catch {
+    console.log("RAW AI ANSWER:", text.slice(0, 2000));
+    console.log("FINISH REASON:", response.choices[0].finish_reason);
     return Response.json({ error: "Could not read AI answer", raw: text }, { status: 500 });
   }
 }
