@@ -8,8 +8,9 @@ const client = new OpenAI({
 const SYSTEM_PROMPT = `You extract price predictions from finance video transcripts.
 Find every clear prediction about a stock or crypto price.
 Return ONLY JSON, no other text, in this format:
-{"predictions":[{"asset":"Bitcoin","ticker":"BTC","direction":"up","target_price":100000,"deadline":"2026-12-31","quote":"exact sentence from the transcript"}]}
+{"predictions":[{"asset":"Bitcoin","symbol":"BTC-USD","direction":"up","target_price":100000,"deadline":"2026-12-31","quote":"exact sentence from the transcript"}]}
 Rules:
+- symbol is the Yahoo Finance symbol. Crypto ends with -USD (BTC-USD, ETH-USD, SOL-USD). Stocks use the normal ticker (TSLA, NVDA, AAPL)
 - direction is "up" or "down"
 - target_price is a number or null
 - deadline is YYYY-MM-DD or null
