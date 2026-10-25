@@ -12,7 +12,8 @@
     "next": "16.4.2",
     "openai": "^7.39.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "yahoo-finance2": "^4.0.5"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
