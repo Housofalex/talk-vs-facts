@@ -24,13 +24,13 @@
 
 ## The problem
 
-Millions of people learn about money from YouTube. A study of financial influencers by Kakhbod, Kazempour, Livdan and Schürhoff (Swiss Finance Institute, 2023) found that only 28% of them showed real skill, while 56% performed worse than random. The worst ones often had the most followers.
+Millions of people learn about money from finance influencers on YouTube and social media. A study by Kakhbod, Kazempour, Livdan and Schürhoff (Swiss Finance Institute, 2023) looked at finfluencers on the investing platform StockTwits. Only 28% showed real skill. 56% were "antiskilled": following their advice did worse than the market. And the unskilled ones tended to have more followers.
 
 Most finance videos aren't lies, and they aren't proof either. They're claims. Some hold up, some leave out the risks, and some go further than the data. Viewers have no quick way to tell which is which.
 
 ## What it does
 
-Paste a YouTube link. In about a minute you get:
+Paste a YouTube link. In one to two minutes you get:
 
 - **A short answer** anyone can read in five seconds, with a chart of how the claims hold up
 - **Price calls** like "Bitcoin to $100k by the end of 2024", checked against real price history from the day the video came out
@@ -57,7 +57,7 @@ flowchart LR
     I --> J[Result]
 ```
 
-Price calls and claims run in parallel, so a full check takes one to two minutes.
+Price calls and claims are checked in parallel to keep it fast.
 
 ### Two Nemotron models, two jobs
 
