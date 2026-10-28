@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Newsreader, IBM_Plex_Sans } from "next/font/google";
 import "./talk.css";
 
@@ -28,6 +28,7 @@ type Source = { id: string; title: string; url: string };
 type Claim = {
   claim: string;
   quote: string;
+  period?: string;
   label: string;
   confidence: number;
   summary: string;
@@ -38,12 +39,26 @@ type Claim = {
 
 type Video = { title: string; channel: string; video_date: string };
 
+const EXAMPLES = [
+  { label: "Tom Nash, investing plan", url: "https://www.youtube.com/watch?v=lgT2G1jpt_w" },
+  { label: "Mark Tilbury, investing for beginners", url: "https://www.youtube.com/watch?v=8Ij7A1VCB7I" },
+];
+
 const STEPS = [
   "Getting the transcript",
   "Finding price predictions",
   "Checking real prices",
-  "Judge is reviewing",
+  "Reviewing the price calls",
   "Checking claims with trusted sources",
+];
+
+const HOW = [
+  { title: "Paste a link", body: "We read everything that is said in the video." },
+  { title: "We find the claims", body: "Price predictions and statements about markets, returns and the economy." },
+  {
+    title: "We check them",
+    body: "Against real price history and trusted sources like the Federal Reserve, IMF, Vanguard and Morningstar.",
+  },
 ];
 
 const VERDICTS: Record<string, { label: string; tone: string }> = {
@@ -55,20 +70,22 @@ const VERDICTS: Record<string, { label: string; tone: string }> = {
   not_a_prediction: { label: "Not a prediction", tone: "muted" },
 };
 
-const CLAIM_LABELS: Record<string, { label: string; tone: string }> = {
-  supported: { label: "Supported", tone: "good" },
-  historically_supported: { label: "True so far, not guaranteed", tone: "info" },
-  missing_context: { label: "Missing context", tone: "warn" },
-  misleading: { label: "Misleading", tone: "bad" },
-  not_supported: { label: "Not supported", tone: "bad" },
-  unverifiable: { label: "Can't verify", tone: "muted" },
-  opinion: { label: "Opinion", tone: "muted" },
+const CLAIM_LABELS: Record<string, { label: string; tone: string; group: string }> = {
+  supported: { label: "Holds up", tone: "good", group: "holds" },
+  historically_supported: { label: "True so far, not guaranteed", tone: "good", group: "holds" },
+  missing_context: { label: "Needs context", tone: "warn", group: "context" },
+  misleading: { label: "Overstated", tone: "bad", group: "overstated" },
+  not_supported: { label: "Data disagrees", tone: "bad", group: "overstated" },
+  unverifiable: { label: "Can't verify", tone: "muted", group: "unclear" },
+  opinion: { label: "Opinion", tone: "muted", group: "unclear" },
 };
 
-const sectionTitle = { fontSize: 22, fontWeight: 600, margin: "56px 0 4px" };
-const sectionNote = { opacity: 0.6, margin: "0 0 8px" };
-const pointList = { margin: "0 0 12px", paddingLeft: 18, lineHeight: 1.55 };
-const sourceLink = { color: "inherit", opacity: 0.7, textDecoration: "underline", fontSize: 13 };
+const GROUPS = [
+  { key: "holds", label: "Hold up", tone: "good" },
+  { key: "context", label: "Need context", tone: "warn" },
+  { key: "overstated", label: "Go further than the data", tone: "bad" },
+  { key: "unclear", label: "Can't be checked", tone: "muted" },
+];
 
 async function post(path: string, body: unknown) {
   const res = await fetch(path, {
@@ -102,28 +119,85 @@ function callText(r: Result) {
   return `${dir}${target}${by}`;
 }
 
-function useCountUp(target: number | null) {
-  const [value, setValue] = useState(0);
-  useEffect(() => {
-    if (target == null) return;
-    let frame = 0;
-    const start = performance.now();
-    const tick = (now: number) => {
-      const t = Math.min((now - start) / 900, 1);
-      setValue(Math.round(target * (1 - Math.pow(1 - t, 3))));
-      if (t < 1) frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [target]);
-  return value;
+function countGroups(claims: Claim[]) {
+  const g: Record<string, number> = { holds: 0, context: 0, overstated: 0, unclear: 0 };
+  for (const c of claims) {
+    const group = (CLAIM_LABELS[c.label] ?? CLAIM_LABELS.unverifiable).group;
+    g[group] += 1;
+  }
+  return g;
+}
+
+function headline(g: Record<string, number>, total: number) {
+  const checkable = total - g.unclear;
+  if (total === 0 || checkable === 0) return "We couldn't find enough checkable claims in this video to judge it.";
+  if (g.overstated === 0 && g.context === 0) return "The claims we could check hold up against the data.";
+  if (g.overstated === 0) return "Mostly in line with the data, but some claims leave out important context.";
+  if (g.overstated > g.holds + g.context) return "Several claims go further than the data supports.";
+  return "A mix: some claims hold up, others go further than the data supports.";
+}
+
+function countLine(g: Record<string, number>, total: number) {
+  const parts: string[] = [];
+  if (g.holds) parts.push(`${g.holds} ${g.holds === 1 ? "holds" : "hold"} up`);
+  if (g.context) parts.push(`${g.context} ${g.context === 1 ? "needs" : "need"} more context`);
+  if (g.overstated) parts.push(`${g.overstated} ${g.overstated === 1 ? "goes" : "go"} further than the data`);
+  if (g.unclear) parts.push(`${g.unclear} can't be checked`);
+  if (parts.length === 0) return "";
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
+  return `Of ${total} ${total === 1 ? "claim" : "claims"} we checked, ${list}.`;
+}
+
+function priceLine(results: Result[], correct: number, finished: number) {
+  if (results.length === 0) return "No price predictions with a clear target were found.";
+  if (finished > 0) return `Price calls: ${correct} of ${finished} finished ${finished === 1 ? "call" : "calls"} came true.`;
+  return `${results.length} price ${results.length === 1 ? "call was" : "calls were"} found, but none can be scored yet.`;
+}
+
+function Donut({ groups, total }: { groups: Record<string, number>; total: number }) {
+  const r = 54;
+  const c = 2 * Math.PI * r;
+  const parts = GROUPS.filter((g) => groups[g.key] > 0);
+  const gap = parts.length > 1 ? 3 : 0;
+  let offset = 0;
+  return (
+    <svg viewBox="0 0 140 140" className="donut" role="img" aria-label={`${total} claims checked`}>
+      <circle cx="70" cy="70" r={r} className="donutTrack" />
+      <g transform="rotate(-90 70 70)">
+        {total > 0 &&
+          parts.map((p, i) => {
+            const len = (groups[p.key] / total) * c;
+            const seg = (
+              <circle
+                key={p.key}
+                cx="70"
+                cy="70"
+                r={r}
+                className={`donutSeg ${p.tone}`}
+                strokeDasharray={`${Math.max(len - gap, 1)} ${c}`}
+                strokeDashoffset={-offset}
+                style={{ animationDelay: `${150 + i * 150}ms` }}
+              />
+            );
+            offset += len;
+            return seg;
+          })}
+      </g>
+      <text x="70" y="72" className="donutNum">
+        {total}
+      </text>
+      <text x="70" y="92" className="donutCaption">
+        {total === 1 ? "claim" : "claims"}
+      </text>
+    </svg>
+  );
 }
 
 function SourceRef({ id, sources }: { id: string; sources: Source[] }) {
   const s = sources.find((x) => x.id === id);
   if (!s) return null;
   return (
-    <a href={s.url} target="_blank" rel="noopener noreferrer" style={sourceLink}>
+    <a href={s.url} target="_blank" rel="noopener noreferrer" className="sourceRef">
       [{id}]
     </a>
   );
@@ -137,32 +211,35 @@ export default function Home() {
   const [results, setResults] = useState<Result[] | null>(null);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   const busy = step >= 0 && step < 5;
 
   const finished = (results ?? []).filter((r) => r.verdict === "correct" || r.verdict === "wrong");
   const correct = (results ?? []).filter((r) => r.verdict === "correct").length;
-  const hitRate = finished.length > 0 ? Math.round((correct / finished.length) * 100) : null;
+  const groups = countGroups(claims);
 
-  const shownHit = useCountUp(hitRate);
-
-  async function analyze() {
-    if (!url.trim() || busy) return;
+  async function analyze(target?: string) {
+    const link = (target ?? url).trim();
+    if (!link || busy) return;
+    if (target) setUrl(target);
     setError(null);
     setVideo(null);
     setResults(null);
     setClaims([]);
     setSummary(null);
+    setOpen(false);
     setStep(0);
 
     try {
-      const v = await post("/api/transcript", { url });
+      const v = await post("/api/transcript", { url: link });
       setVideo({ title: v.title, channel: v.channel, video_date: v.video_date });
       setStep(1);
 
       const claimsPromise: Promise<Claim[]> = post("/api/claims", {
         transcript: v.transcript,
         title: v.title,
+        video_date: v.video_date,
       })
         .then((d) => (Array.isArray(d.claims) ? d.claims : []))
         .catch(() => []);
@@ -206,7 +283,7 @@ export default function Home() {
           });
           setSummary(j.summary);
         } catch {
-          setSummary("The judge could not finish, so these are the plain price checks.");
+          setSummary("The review could not finish, so these are the plain price checks.");
         }
       }
 
@@ -222,6 +299,8 @@ export default function Home() {
     }
   }
 
+  const showIntro = !results && !busy;
+
   return (
     <main className={`page ${sans.className}`}>
       <div className="inner">
@@ -231,8 +310,7 @@ export default function Home() {
           <span>Facts</span>
         </h1>
         <p className="lead">
-          Paste a finance video. We find the price calls and claims in it and check them against real market data and
-          trusted sources.
+          Paste a finance video. We check what was said against real market data and trusted sources.
         </p>
 
         <div className="form">
@@ -243,10 +321,20 @@ export default function Home() {
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && analyze()}
             disabled={busy}
+            aria-label="YouTube link"
           />
-          <button className="button" onClick={analyze} disabled={busy || !url.trim()}>
+          <button className="button" onClick={() => analyze()} disabled={busy || !url.trim()}>
             {busy ? "Checking..." : "Check video"}
           </button>
+        </div>
+
+        <div className="examples">
+          <span>Try an example:</span>
+          {EXAMPLES.map((e) => (
+            <button key={e.url} className="exampleBtn" onClick={() => analyze(e.url)} disabled={busy}>
+              {e.label}
+            </button>
+          ))}
         </div>
 
         {busy && (
@@ -262,6 +350,24 @@ export default function Home() {
 
         {error && <div className="error">{error}</div>}
 
+        {showIntro && (
+          <section className="how">
+            <p className={`howText ${serif.className}`}>
+              Most finance videos are not lies, and not proof either. They are claims. Some hold up, some leave out
+              the risks, some go further than the data. We show you which is which, with sources.
+            </p>
+            <ol className="howSteps">
+              {HOW.map((h, i) => (
+                <li key={h.title}>
+                  <div className="howNum">{i + 1}</div>
+                  <div className="howTitle">{h.title}</div>
+                  <p className="howBody">{h.body}</p>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+
         {results && video && (
           <>
             <section className="overview">
@@ -269,171 +375,195 @@ export default function Home() {
                 {video.channel}, published {niceDate(video.video_date)}
               </div>
               <h2 className="title">{video.title}</h2>
+            </section>
 
-              <div className="stats">
+            <section className="summary" aria-labelledby="in-short">
+              <h2 id="in-short" className="summaryLabel">
+                In short
+              </h2>
+              <div className="summaryGrid">
+                <Donut groups={groups} total={claims.length} />
                 <div>
-                  <div className="statValue">{hitRate != null ? `${shownHit}%` : "n/a"}</div>
-                  <div className="statLabel">
-                    {hitRate != null
-                      ? `Hit rate, ${correct} of ${finished.length} finished calls`
-                      : "Hit rate, no finished calls yet"}
-                  </div>
-                </div>
-                <div>
-                  <div className="statValue">{results.length}</div>
-                  <div className="statLabel">Price calls found</div>
-                </div>
-                <div>
-                  <div className="statValue">{claims.length}</div>
-                  <div className="statLabel">Claims checked</div>
+                  <p className={`headline ${serif.className}`}>{headline(groups, claims.length)}</p>
+                  {claims.length > 0 && <p className="summaryText">{countLine(groups, claims.length)}</p>}
+                  <p className="summaryMuted">{priceLine(results, correct, finished.length)}</p>
                 </div>
               </div>
 
-              {summary && <p className="judgeNote">{summary}</p>}
+              {claims.length > 0 && (
+                <ul className="legend">
+                  {GROUPS.map((g) => (
+                    <li key={g.key}>
+                      <span className={`swatch ${g.tone}`} />
+                      {g.label}
+                      <span className="legendCount">{groups[g.key]}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <p className="readNote">
+                These are claims, not proof either way. “Holds up” means trusted data backs it. “Needs context” means
+                the idea is fair, but risks or assumptions are left out. We rate the claims, not the person, and nothing
+                here tells you what to buy or sell.
+              </p>
+
+              {(claims.length > 0 || results.length > 0) && (
+                <button className="detailsBtn" onClick={() => setOpen(!open)} aria-expanded={open}>
+                  {open ? "Hide the evidence" : "Show the evidence"}
+                </button>
+              )}
             </section>
 
-            {results.length === 0 && claims.length === 0 && (
-              <p className="empty">
-                No price calls or checkable claims found in this video. Try one where the creator names a price target
-                or makes claims about markets.
-              </p>
+            {open && (
+              <div className="details">
+                {claims.length > 0 && (
+                  <>
+                    <h3 className="sectionTitle">Claims</h3>
+                    <p className="sectionNote">
+                      Checked against trusted sources like the Federal Reserve, IMF, S&amp;P, Vanguard and Morningstar.
+                    </p>
+                  </>
+                )}
+
+                {claims.map((c, i) => {
+                  const l = CLAIM_LABELS[c.label] ?? CLAIM_LABELS.unverifiable;
+                  const showConfidence = l.group !== "unclear" && c.confidence > 0;
+                  return (
+                    <article key={`c${i}`} className="row">
+                      <div className="rowHead">
+                        <div>
+                          <div className="asset">{c.claim}</div>
+                          <div className="call">
+                            {c.period && c.period !== "long term" ? `About ${c.period}` : "Long term"}
+                            {showConfidence ? `, confidence ${Math.round(c.confidence * 100)}%` : ""}
+                          </div>
+                        </div>
+                        <span className={`stamp ${l.tone}`}>{l.label}</span>
+                      </div>
+
+                      <div className="split">
+                        <div>
+                          <div className="sideLabel">They said</div>
+                          <blockquote className={`quote quoteSmall ${serif.className}`}>“{c.quote}”</blockquote>
+                        </div>
+                        <div>
+                          {c.supporting.length > 0 && (
+                            <>
+                              <div className="sideLabel">What sources say</div>
+                              <ul className="points">
+                                {c.supporting.map((p, k) => (
+                                  <li key={k}>
+                                    {p.text}
+                                    <SourceRef id={p.source} sources={c.sources} />
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          )}
+                          {c.risks.length > 0 && (
+                            <>
+                              <div className="sideLabel">Risks to know</div>
+                              <ul className="points">
+                                {c.risks.map((p, k) => (
+                                  <li key={k}>
+                                    {p.text}
+                                    <SourceRef id={p.source} sources={c.sources} />
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          )}
+                          {c.supporting.length === 0 && c.risks.length === 0 && (
+                            <div className="call">No trusted sources found for this claim.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {c.summary && <p className="reasoning">{c.summary}</p>}
+
+                      {c.sources.length > 0 && (
+                        <div className="sourceList">
+                          {c.sources.map((s) => (
+                            <a key={s.id} href={s.url} target="_blank" rel="noopener noreferrer">
+                              {s.id}: {s.title}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+
+                {results.length > 0 && (
+                  <>
+                    <h3 className="sectionTitle">Price calls</h3>
+                    <p className="sectionNote">Checked against historical prices from Yahoo Finance.</p>
+                    {summary && <p className="judgeNote">{summary}</p>}
+                  </>
+                )}
+
+                {results.map((r, i) => {
+                  const v = VERDICTS[r.verdict ?? ""] ?? { label: "No price data", tone: "muted" };
+                  return (
+                    <article key={i} className="row">
+                      <div className="rowHead">
+                        <div>
+                          <div className="asset">{r.asset}</div>
+                          <div className="call">{callText(r)}</div>
+                        </div>
+                        <span className={`stamp ${v.tone}`}>{v.label}</span>
+                      </div>
+
+                      <div className="split">
+                        <div>
+                          <div className="sideLabel">They said</div>
+                          <blockquote className={`quote quoteSmall ${serif.className}`}>“{r.quote}”</blockquote>
+                        </div>
+                        <div>
+                          <div className="sideLabel">What happened</div>
+                          {r.startPrice != null ? (
+                            <dl className="prices">
+                              <dt>On video day</dt>
+                              <dd>{money(r.startPrice)}</dd>
+                              <dt>Highest after</dt>
+                              <dd>{money(r.highest)}</dd>
+                              <dt>Lowest after</dt>
+                              <dd>{money(r.lowest)}</dd>
+                              <dt>Last checked</dt>
+                              <dd>{money(r.endPrice)}</dd>
+                            </dl>
+                          ) : (
+                            <div className="call">No price data for {r.symbol}.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {r.reasoning && <p className="reasoning">{r.reasoning}</p>}
+                    </article>
+                  );
+                })}
+              </div>
             )}
 
-            {results.length > 0 && (
-              <>
-                <h3 style={sectionTitle}>Price calls</h3>
-                <p style={sectionNote}>Checked against historical prices from Yahoo Finance.</p>
-              </>
-            )}
-
-            {results.map((r, i) => {
-              const v = VERDICTS[r.verdict ?? ""] ?? { label: "No price data", tone: "muted" };
-              return (
-                <article key={i} className="row" style={{ animationDelay: `${200 + i * 100}ms` }}>
-                  <div className="rowHead">
-                    <div>
-                      <div className="asset">{r.asset}</div>
-                      <div className="call">{callText(r)}</div>
-                    </div>
-                    <span className={`stamp ${v.tone}`} style={{ animationDelay: `${500 + i * 100}ms` }}>
-                      {v.label}
-                    </span>
-                  </div>
-
-                  <div className="split">
-                    <div>
-                      <div className="sideLabel">They said</div>
-                      <blockquote className={`quote ${serif.className}`}>“{r.quote}”</blockquote>
-                    </div>
-                    <div>
-                      <div className="sideLabel">What happened</div>
-                      {r.startPrice != null ? (
-                        <dl className="prices">
-                          <dt>On video day</dt>
-                          <dd>{money(r.startPrice)}</dd>
-                          <dt>Highest after</dt>
-                          <dd>{money(r.highest)}</dd>
-                          <dt>Lowest after</dt>
-                          <dd>{money(r.lowest)}</dd>
-                          <dt>Last checked</dt>
-                          <dd>{money(r.endPrice)}</dd>
-                        </dl>
-                      ) : (
-                        <div className="call">No price data for {r.symbol}.</div>
-                      )}
-                    </div>
-                  </div>
-
-                  {r.reasoning && <p className="reasoning">{r.reasoning}</p>}
-                </article>
-              );
-            })}
-
-            {claims.length > 0 && (
-              <>
-                <h3 style={sectionTitle}>Claims</h3>
-                <p style={sectionNote}>
-                  Checked against trusted sources like the SEC, Federal Reserve, S&amp;P and central banks. We rate the
-                  claim, not the person.
-                </p>
-              </>
-            )}
-
-            {claims.map((c, i) => {
-              const l = CLAIM_LABELS[c.label] ?? CLAIM_LABELS.unverifiable;
-              const delay = 200 + (results.length + i) * 100;
-              return (
-                <article key={`c${i}`} className="row" style={{ animationDelay: `${delay}ms` }}>
-                  <div className="rowHead">
-                    <div>
-                      <div className="asset">{c.claim}</div>
-                      {c.confidence > 0 && (
-                        <div className="call">Confidence {Math.round(c.confidence * 100)}%</div>
-                      )}
-                    </div>
-                    <span className={`stamp ${l.tone}`} style={{ animationDelay: `${delay + 300}ms` }}>
-                      {l.label}
-                    </span>
-                  </div>
-
-                  <div className="split">
-                    <div>
-                      <div className="sideLabel">They said</div>
-                      <blockquote className={`quote ${serif.className}`}>“{c.quote}”</blockquote>
-                    </div>
-                    <div>
-                      {c.supporting.length > 0 && (
-                        <>
-                          <div className="sideLabel">What sources say</div>
-                          <ul style={pointList}>
-                            {c.supporting.map((p, k) => (
-                              <li key={k}>
-                                {p.text} <SourceRef id={p.source} sources={c.sources} />
-                              </li>
-                            ))}
-                          </ul>
-                        </>
-                      )}
-                      {c.risks.length > 0 && (
-                        <>
-                          <div className="sideLabel">Risks to know</div>
-                          <ul style={pointList}>
-                            {c.risks.map((p, k) => (
-                              <li key={k}>
-                                {p.text} <SourceRef id={p.source} sources={c.sources} />
-                              </li>
-                            ))}
-                          </ul>
-                        </>
-                      )}
-                      {c.supporting.length === 0 && c.risks.length === 0 && (
-                        <div className="call">No trusted sources found for this claim.</div>
-                      )}
-                    </div>
-                  </div>
-
-                  {c.summary && <p className="reasoning">{c.summary}</p>}
-
-                  {c.sources.length > 0 && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 8 }}>
-                      {c.sources.map((s) => (
-                        <a key={s.id} href={s.url} target="_blank" rel="noopener noreferrer" style={sourceLink}>
-                          {s.id}: {s.title}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-
-            <p className="call" style={{ marginTop: 48, opacity: 0.6, fontSize: 13, lineHeight: 1.6 }}>
+            <p className="aiNote">
               AI-generated analysis using NVIDIA Nemotron via Nebius. It can contain errors and is not reviewed by a
               human. This is not financial advice and does not recommend buying or selling anything. Past performance
               does not guarantee future results.
             </p>
           </>
         )}
+
+        <footer className="footer">
+          <span>Talk vs Facts, a free hackathon project. Not financial advice.</span>
+          <nav className="footerLinks" aria-label="Legal">
+            <a href="/methodology">How we check</a>
+            <a href="/disclaimer">Disclaimer</a>
+            <a href="/privacy">Privacy</a>
+            <a href="/terms">Terms</a>
+            <a href="/contact">Contact</a>
+          </nav>
+        </footer>
       </div>
     </main>
   );
