@@ -1,36 +1,171 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+<div align="center">
 
-## Getting Started
+# Talk vs Facts
 
-First, run the development server:
+### Finance videos, checked against the data.
+
+[![Live](https://img.shields.io/badge/Live-talk--vs--facts.vercel.app-2fd67b?style=for-the-badge)](https://talk-vs-facts.vercel.app)
+
+![Next.js](https://img.shields.io/badge/Next.js_16-000000?style=flat-square&logo=nextdotjs&logoColor=white)
+![NVIDIA Nemotron](https://img.shields.io/badge/NVIDIA_Nemotron-76B900?style=flat-square&logo=nvidia&logoColor=white)
+![Nebius](https://img.shields.io/badge/Nebius_Token_Factory-0b0b0b?style=flat-square)
+![Tavily](https://img.shields.io/badge/Tavily_Search-3b82f6?style=flat-square)
+![Vercel](https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white)
+
+[Live app](https://talk-vs-facts.vercel.app) | [How it works](#how-it-works) | [Run it locally](#run-it-locally)
+
+<br />
+
+<img src="docs/home.png" alt="Talk vs Facts homepage" width="800" />
+
+</div>
+
+<br />
+
+## The problem
+
+Millions of people learn about money from YouTube. A study of financial influencers by Kakhbod, Kazempour, Livdan and Schürhoff (Swiss Finance Institute, 2023) found that only 28% of them showed real skill, while 56% performed worse than random. The worst ones often had the most followers.
+
+Most finance videos aren't lies, and they aren't proof either. They're claims. Some hold up, some leave out the risks, and some go further than the data. Viewers have no quick way to tell which is which.
+
+## What it does
+
+Paste a YouTube link. In about a minute you get:
+
+- **A short answer** anyone can read in five seconds, with a chart of how the claims hold up
+- **Price calls** like "Bitcoin to $100k by the end of 2024", checked against real price history from the day the video came out
+- **Market claims** like "the S&P 500 returns 10% a year like clockwork", checked against sources such as the Federal Reserve, IMF, World Bank, S&P Dow Jones Indices, Vanguard, Fidelity and Morningstar
+- **The full evidence** for every claim: the exact quote, what the sources say, the risks left out, and a link to each source
+
+<div align="center">
+<img src="docs/result.png" alt="Result page with summary and evidence" width="800" />
+</div>
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[YouTube link] --> B[Transcript<br/>Supadata]
+    B --> C[Find price calls<br/>Nemotron Nano]
+    B --> D[Find claims<br/>Nemotron Nano]
+    C --> E[Price history<br/>Yahoo Finance]
+    E --> F[Review calls<br/>Nemotron Ultra]
+    D --> G[Search sources<br/>Tavily]
+    G --> H[Judge claims<br/>Nemotron Ultra]
+    F --> I[Fairness rules]
+    H --> I
+    I --> J[Result]
+```
+
+Price calls and claims run in parallel, so a full check takes one to two minutes.
+
+### Two Nemotron models, two jobs
+
+I use both models through **Nebius Token Factory**, each where it's strongest:
+
+| Model | Job | Why |
+|---|---|---|
+| Nemotron 3 Nano | Reading the transcript, finding price calls and claims | Fast and cheap. Thinking is turned off because this is extraction, not reasoning |
+| Nemotron 3 Ultra | Judging each claim and price call | Needs real reasoning: comparing time periods, doing compound interest math, spotting when "always" goes further than the data |
+
+### Evidence with Tavily
+
+Every claim gets two searches: one to check it, one to look for risks and counter evidence. Searches are limited to an allow list of trusted domains (central banks, the IMF, index providers, large asset managers, university research), and social media is blocked. Ultra only sees the sources Tavily actually returned.
+
+## Trust and fairness
+
+This app talks about real people, so being fair matters more than being dramatic. The key rules live in code, not just in prompts:
+
+- **Quotes are verified.** Every quote is matched against the real transcript. If the words aren't in the video, the claim is dropped.
+- **Deadlines are verified.** A price call only gets a deadline if the exact words stating it appear in the transcript.
+- **Sources are verified.** Any citation that doesn't point to a source Tavily returned is removed.
+- **The claim has to match the quote.** If it's stronger or different from what was actually said, it's dropped.
+- **Negative labels need strong evidence.** "Overstated" needs 60% confidence, "Data disagrees" needs 75%. Below that, it's "Can't verify".
+- **No "wrong" for the future.** Claims about the future, or with unclear time words like "this year", can't be marked as wrong.
+- **Strong words get checked.** "Always", "impossible" or "like clockwork" can't get "Holds up" when the data shows exceptions.
+- **Claims are rated, never people.** No rankings of creators, and no results are stored.
+
+## Labels
+
+| Label | Meaning |
+|---|---|
+| Holds up | Trusted sources confirm it as it was said |
+| True so far, not guaranteed | About the future, backed by long term data |
+| Needs context | Fair idea, but risks, assumptions or time frames are left out |
+| Overstated | Gives a clearly stronger impression than the data supports |
+| Data disagrees | A trusted source directly contradicts it for the same measure and period |
+| Can't verify | The sources don't clearly answer it |
+| Opinion | A personal belief that can't be checked with data |
+
+## Tech stack
+
+| Layer | Tools |
+|---|---|
+| App | Next.js 16 (App Router), TypeScript, hosted on Vercel |
+| AI | NVIDIA Nemotron 3 Nano and Nemotron 3 Ultra via Nebius Token Factory |
+| Search | Tavily, with domain allow list |
+| Data | Supadata (transcripts), Yahoo Finance (price history) |
+
+## Run it locally
+
+```bash
+git clone https://github.com/Housofalex/talk-vs-facts.git
+cd talk-vs-facts
+npm install
+```
+
+Create a `.env.local` file in the project folder:
+
+```
+NEBIUS_API_KEY=your_key
+TAVILY_API_KEY=your_key
+SUPADATA_API_KEY=your_key
+```
+
+Start the app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then open http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+app/
+  page.tsx            Homepage and results
+  [slug]/page.tsx     How we check, Disclaimer, Privacy, Terms, Contact
+  Intro.tsx           Opening animation
+  Dive.tsx            Page transitions
+  api/
+    transcript/       Transcript and video info
+    extract/          Price call extraction
+    check/            Price history check
+    judge/            Price call review
+    claims/           Claim extraction, evidence search and verdicts
+```
 
-## Learn More
+## Challenges I ran into
 
-To learn more about Next.js, take a look at the following resources:
+- **YouTube blocks servers.** Free transcript libraries worked on my laptop but got blocked once deployed. I switched to Supadata's API to make it reliable in production.
+- **Models thinking too long.** Nano sometimes spent its whole token budget thinking before answering. Turning thinking off for extraction, plus retries, fixed it.
+- **The AI being confidently wrong.** In testing, the model invented deadlines, quoted things nobody said, and judged a 2020 story as if it were about 2023. Each of these became a rule in code that checks the output against the transcript.
+- **Fair vs. harsh.** Early versions labeled too many claims "misleading". I added confidence thresholds and time rules so the app only calls something out when the evidence is clear.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## What's next
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Track a channel across many videos to see how its calls hold up over time
+- Timestamped links that jump to the exact moment in the video
+- A browser extension that shows results right on YouTube
+- Licensed market data and more languages
 
-## Deploy on Vercel
+## Disclaimer
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Talk vs Facts is a free, non-commercial educational project. It is not financial advice and does not recommend buying or selling anything. Results are generated by AI models and can contain errors. See [How we check](https://talk-vs-facts.vercel.app/methodology) and the [Disclaimer](https://talk-vs-facts.vercel.app/disclaimer).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Author
+
+Built by **Alexander Rohrbach** in Switzerland for the **Nebius x NVIDIA Global AI Hackathon 2026**.
+
+Contact: talkvsfacts.team@gmail.com
