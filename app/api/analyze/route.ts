@@ -1,3 +1,5 @@
+export const maxDuration = 300;
+
 type Prediction = {
   asset: string;
   symbol: string;
@@ -26,6 +28,15 @@ export async function POST(req: Request) {
     return Response.json(video, { status: 500 });
   }
   const video_date = video.video_date;
+
+  const claimsPromise = fetch(new URL("/api/claims", req.url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript: video.transcript, title: video.title }),
+  })
+    .then((r) => r.json())
+    .then((d) => (Array.isArray(d.claims) ? d.claims : []))
+    .catch(() => []);
 
   const extractRes = await fetch(new URL("/api/extract", req.url), {
     method: "POST",
@@ -88,15 +99,20 @@ export async function POST(req: Request) {
   const correct = results.filter((r) => r.verdict === "correct").length;
   const hit_rate = finished.length > 0 ? Math.round((correct / finished.length) * 100) : null;
 
+  const claims = await claimsPromise;
+
   return Response.json({
+    videoId: video.videoId,
     title: video.title,
     channel: video.channel,
     video_date,
     hit_rate,
+    finished: finished.length,
     trust_score,
     summary,
     total: results.length,
     correct,
     results,
+    claims,
   });
 }
