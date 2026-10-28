@@ -58,6 +58,9 @@ const LABELS = [
   "opinion",
 ];
 
+const NEGATIVE = ["misleading", "not_supported"];
+const MIN_NEGATIVE_CONFIDENCE = 0.6;
+
 const ABSOLUTE_WORDS = [
   "impossible",
   "always",
@@ -195,40 +198,43 @@ async function gatherSources(claim: Claim) {
 }
 
 const EXTRACT_PROMPT = `You read transcripts of finance videos.
-Find up to 7 of the most important CHECKABLE claims about markets, investing or the economy that the speaker ACTUALLY makes in this transcript.
-Only use claims that are really in the transcript. Never invent claims and never reuse the example types below as claims.
+Find up to 7 of the most important CHECKABLE claims about markets, investing or the economy that the speaker ACTUALLY states as facts to the viewer in this transcript.
+Only use claims that are really in the transcript. Never invent claims.
 Kinds of claims to look for:
 - statistics about long term returns or how often investors beat the market
 - calculations, like how much monthly investing grows to over many years
 - economic facts, like how much the economy grew or shrank in a given year
-- general rules presented as facts, like "you can't lose if you hold"
+- general rules about investing that the speaker presents as facts
 Skip completely:
 - price predictions with a target or a date
+- the speaker's own personal plans, wishes or choices ("I want", "I will", "my plan is", "I'm going to")
 - personal stories or results of one specific person
 - quotes attributed to famous people
-- pure opinions, hype, jokes, motivation
+- pure opinions, hype, jokes, motivation, ads
 For each claim return:
-- claim: one short sentence in the speaker's own words that says EXACTLY what was claimed. Never soften or strengthen it. If the speaker said impossible, always, never, guaranteed, like clockwork or cannot lose, that word MUST appear in the claim. Keep the numbers the speaker gave. Do not add numbers the speaker did not say.
-- period: the real years the claim is about. Turn words like "this year", "this time period" or "now" into actual years using the context of the transcript (for example a story about the 2020 crash means 2020). If no time is mentioned, use "long term".
-- quote: copy the exact words from the transcript, word for word, max 30 words
+- claim: one short sentence that says EXACTLY what the quote says. Stay as close to the speaker's own words as possible. Never soften or strengthen it. Never turn a personal plan into general advice. If the speaker said impossible, always, never, guaranteed, like clockwork or cannot lose, that word MUST appear in the claim. Do not add numbers the speaker did not say.
+- period: the real years the claim is about. Turn words like "this year", "this time period" or "now" into actual years using the context of the transcript. If no time is mentioned, use "long term".
+- quote: copy the exact words from the transcript, word for word, max 30 words. The quote alone must clearly contain the claim.
 - type: one of statistic, calculation, economic_fact, general
 - queries: exactly 2 web search queries that include the period, the first to find official data that checks the claim, the second to find risks or counter evidence
 Return ONLY JSON: {"claims":[{"claim":"","period":"","quote":"","type":"","queries":["",""]}]}
 If there are no checkable claims return {"claims":[]}.`;
 
-const VERDICT_PROMPT = `You are a careful, fair financial fact checker.
-Judge ONE claim using ONLY the numbered SOURCES given, plus your own arithmetic. Never invent sources, numbers or links.
+const VERDICT_PROMPT = `You are a careful, fair financial fact checker. Be fair to the speaker: only call something misleading when the evidence clearly shows it.
+STEP 1: Read the QUOTE on its own. Does the QUOTE clearly state the CLAIM as a fact to the viewer, with the same meaning and strength? Personal plans or wishes ("I want", "I will", "my plan") are NOT claims. If the claim is stronger, broader or different from the quote, the answer is false.
+STEP 2: Only if STEP 1 is true, judge the claim using ONLY the numbered SOURCES given, plus your own arithmetic. Never invent sources, numbers or links.
 Judge the claim exactly as worded in the QUOTE, including its strong words, and for the PERIOD given.
 Labels:
 - supported: sources directly confirm it, as worded
 - historically_supported: about the future, but backed by long term historical records (not guaranteed)
-- missing_context: roughly true, but leaves out important risks, assumptions, time frames or conditions
-- misleading: framed to give a false impression (for example "guaranteed", "like clockwork", "impossible", "can't lose", cherry picked periods, unrealistic return assumptions)
+- missing_context: roughly true, but leaves out important risks, assumptions, time frames or conditions, or rounds numbers a bit
+- misleading: framed to give a clearly false impression (for example "guaranteed", "like clockwork", "impossible", "can't lose", cherry picked periods, unrealistic return assumptions far above long term averages)
 - not_supported: a source DIRECTLY contradicts the claim about the SAME thing and the SAME period
 - unverifiable: the sources do not directly address the claim or the period
-- opinion: a value statement that cannot be checked
+- opinion: a value statement or personal belief that cannot be checked with data
 Strict rules:
-- Sources about a different year or period than the PERIOD do not count as evidence. If no source matches the period, use unverifiable.
+- Sources about a different year, period, market or type of investing than the claim do not count as evidence. If no source matches, use unverifiable.
+- Small rounding or slight exaggeration of a number (for example saying "half" when the data says "nearly half" or 40%) is missing_context, not misleading.
 - If the quote uses absolute words (always, never, impossible, guaranteed, like clockwork, cannot lose) and the sources show exceptions or big year to year swings, use missing_context or misleading, never supported.
 - Only use not_supported when a source clearly contradicts the exact same measure and period.
 - Ignore fund prospectuses, fund filings, single fund returns and unrelated indexes unless the claim is about them.
@@ -239,7 +245,8 @@ Strict rules:
 - Every point must cite a source id like "S1". Your own math can go in the summary without a source.
 - Never give buy or sell advice.
 Return ONLY JSON:
-{"label":"","confidence":0.0,"summary":"2 sentences max in plain English","supporting":[{"text":"","source":"S1"}],"risks":[{"text":"","source":"S2"}]}`;
+{"matches_quote":true,"label":"","confidence":0.0,"summary":"2 sentences max in plain English","supporting":[{"text":"","source":"S1"}],"risks":[{"text":"","source":"S2"}]}
+If matches_quote is false, return {"matches_quote":false} and nothing else.`;
 
 async function checkClaim(claim: Claim, videoDate: string) {
   const base = { claim: claim.claim, quote: claim.quote, period: claim.period ?? "long term" };
@@ -268,15 +275,24 @@ async function checkClaim(claim: Claim, videoDate: string) {
       false
     );
 
+    if (v.matches_quote === false) return null;
+
     const ids = new Set(sources.map((s) => s.id));
     const supporting = ((v.supporting ?? []) as Point[]).filter((p) => ids.has(p.source));
     const risks = ((v.risks ?? []) as Point[]).filter((p) => ids.has(p.source));
     const used = new Set([...supporting, ...risks].map((p) => p.source));
+    const confidence = typeof v.confidence === "number" ? v.confidence : 0;
 
     let label = LABELS.includes(v.label) ? v.label : "unverifiable";
+    let summary = v.summary ?? "";
+
     if (used.size === 0 && label !== "opinion") label = "unverifiable";
 
-    let summary = v.summary ?? "";
+    if (NEGATIVE.includes(label) && confidence < MIN_NEGATIVE_CONFIDENCE) {
+      label = "unverifiable";
+      summary = `${summary} The evidence is not strong enough to call this claim wrong or misleading.`.trim();
+    }
+
     const strong = findAbsolute(claim.quote);
     if (strong && (label === "supported" || label === "historically_supported")) {
       label = "missing_context";
@@ -286,7 +302,7 @@ async function checkClaim(claim: Claim, videoDate: string) {
     return {
       ...base,
       label,
-      confidence: typeof v.confidence === "number" ? v.confidence : 0,
+      confidence,
       summary,
       supporting,
       risks,
@@ -296,15 +312,7 @@ async function checkClaim(claim: Claim, videoDate: string) {
     };
   } catch (err) {
     console.error(err);
-    return {
-      ...base,
-      label: "unverifiable",
-      confidence: 0,
-      summary: "This claim could not be checked right now.",
-      supporting: [],
-      risks: [],
-      sources: [],
-    };
+    return null;
   }
 }
 
@@ -333,10 +341,11 @@ export async function POST(req: Request) {
         seen.add(key);
         return true;
       })
-      .slice(0, 5);
+      .slice(0, 6);
 
     const checked = await Promise.all(claims.map((c) => checkClaim(c, videoDate)));
-    return Response.json({ claims: checked });
+    const kept = checked.filter((c) => c !== null).slice(0, 5);
+    return Response.json({ claims: kept });
   } catch (err) {
     console.error(err);
     return Response.json({ error: String(err) }, { status: 500 });
