@@ -59,7 +59,8 @@ const LABELS = [
 ];
 
 const NEGATIVE = ["misleading", "not_supported"];
-const MIN_NEGATIVE_CONFIDENCE = 0.6;
+const MIN_MISLEADING_CONFIDENCE = 0.6;
+const MIN_NOT_SUPPORTED_CONFIDENCE = 0.75;
 
 const ABSOLUTE_WORDS = [
   "impossible",
@@ -96,7 +97,10 @@ const RELATIVE_TIME = [
   "recently",
   "at the moment",
   "currently",
+  " here",
 ];
+
+const FUTURE_WORDS = [" will ", "won't", "will not", "going to", "gonna", "is set to", "are set to"];
 
 type Claim = { claim: string; quote: string; type?: string; period?: string; queries: string[] };
 type Source = { id: string; title: string; url: string; content: string };
@@ -136,8 +140,8 @@ function quoteIsReal(quote: string, transcript: string) {
 }
 
 function findWord(text: string, words: string[]) {
-  const lower = text.toLowerCase().replace(/’/g, "'");
-  return words.find((w) => lower.includes(w)) ?? null;
+  const lower = ` ${text.toLowerCase().replace(/’/g, "'")} `;
+  return words.find((w) => lower.includes(w))?.trim() ?? null;
 }
 
 async function ask(model: string, system: string, user: string, noThink: boolean) {
@@ -223,22 +227,23 @@ Kinds of claims to look for:
 - economic facts, like how much the economy grew or shrank in a given year
 - general rules about investing that the speaker presents as facts
 Skip completely:
-- price predictions with a target or a date
+- price predictions for a specific asset (these are handled separately)
+- comments about what is visible on a chart or screen ("as you can see here", "we peaked out here", "this level right here")
 - the speaker's own personal plans, wishes or choices ("I want", "I will", "my plan is", "I'm going to")
 - personal stories or results of one specific person
 - quotes attributed to famous people
 - pure opinions, hype, jokes, motivation, ads
 For each claim return:
 - claim: one short sentence that says EXACTLY what the quote says. Stay as close to the speaker's own words as possible. Never soften or strengthen it. Never turn a personal plan into general advice. If the speaker said impossible, always, never, guaranteed, like clockwork or cannot lose, that word MUST appear in the claim. Do not add numbers the speaker did not say.
-- period: the real years the claim is about. Speakers often tell stories about the past, like a market crash years ago. In a story, "this year" means the year of that story, not the year the video was published. Use the surrounding sentences to find the real year. If you cannot tell for sure, use "unclear". If no time is mentioned at all, use "long term".
+- period: the real years the claim is about. Speakers often tell stories about the past, like a market crash years ago. In a story, "this year" means the year of that story, not the year the video was published. Use the surrounding sentences to find the real year. If you cannot tell for sure, use "unclear". If no time is mentioned at all, use "long term". If the claim is about the future, use "future".
 - quote: copy the exact words from the transcript, word for word, max 30 words. The quote alone must clearly contain the claim.
 - type: one of statistic, calculation, economic_fact, general
 - queries: exactly 2 web search queries that include the period if known, the first to find official data that checks the claim, the second to find risks or counter evidence
 Return ONLY JSON: {"claims":[{"claim":"","period":"","quote":"","type":"","queries":["",""]}]}
 If there are no checkable claims return {"claims":[]}.`;
 
-const VERDICT_PROMPT = `You are a careful, fair financial fact checker. Be fair to the speaker: only call something misleading when the evidence clearly shows it.
-STEP 1: Read the QUOTE on its own. Does the QUOTE clearly state the CLAIM as a fact to the viewer, with the same meaning and strength? Personal plans or wishes ("I want", "I will", "my plan") are NOT claims. If the claim is stronger, broader or different from the quote, the answer is false.
+const VERDICT_PROMPT = `You are a careful, fair financial fact checker. Be fair to the speaker: only call something misleading or contradicted when the evidence clearly shows it.
+STEP 1: Read the QUOTE on its own. Does the QUOTE clearly state the CLAIM as a fact to the viewer, with the same meaning and strength? Personal plans or wishes ("I want", "I will", "my plan") are NOT claims. Comments about what is shown on a chart are NOT claims. If the claim is stronger, broader or different from the quote, the answer is false.
 STEP 2: Only if STEP 1 is true, judge the claim using ONLY the numbered SOURCES given, plus your own arithmetic. Never invent sources, numbers or links.
 Judge the claim exactly as worded in the QUOTE, including its strong words, and for the PERIOD given.
 Labels:
@@ -250,11 +255,12 @@ Labels:
 - unverifiable: the sources do not directly address the claim or the period
 - opinion: a value statement or personal belief that cannot be checked with data
 Strict rules:
+- Claims about the future can never be not_supported, because the future has not happened yet. Use historically_supported, missing_context, misleading or unverifiable.
 - If the PERIOD is "unclear", or the quote may be part of a story about a different time, never use not_supported or misleading. Use unverifiable.
 - Sources about a different year, period, market or type of investing than the claim do not count as evidence. If no source matches, use unverifiable.
 - Small rounding or slight exaggeration of a number (for example saying "half" when the data says "nearly half" or 40%) is missing_context, not misleading.
+- Casual everyday wording (for example "the government printed money" meaning money creation in general) should be judged by its plain meaning, not by a narrow technical definition.
 - If the quote uses absolute words (always, never, impossible, guaranteed, like clockwork, cannot lose) and the sources show exceptions or big year to year swings, use missing_context or misleading, never supported.
-- Only use not_supported when a source clearly contradicts the exact same measure and period.
 - Ignore fund prospectuses, fund filings, single fund returns and unrelated indexes unless the claim is about them.
 - For calculations (like compound growth of monthly investing), do the math yourself. State the yearly return the claim implies, and compare it to long term averages in the sources. Use missing_context if the assumed return is not stated, misleading if it is far above long term averages.
 - Confidence must be below 0.6 when the sources are indirect.
@@ -296,32 +302,47 @@ async function checkClaim(claim: Claim, videoDate: string) {
     if (v.matches_quote === false) return null;
 
     const ids = new Set(sources.map((s) => s.id));
-    const supporting = ((v.supporting ?? []) as Point[]).filter((p) => ids.has(p.source));
-    const risks = ((v.risks ?? []) as Point[]).filter((p) => ids.has(p.source));
-    const used = new Set([...supporting, ...risks].map((p) => p.source));
+    let supporting = ((v.supporting ?? []) as Point[]).filter((p) => ids.has(p.source));
+    let risks = ((v.risks ?? []) as Point[]).filter((p) => ids.has(p.source));
     const confidence = typeof v.confidence === "number" ? v.confidence : 0;
 
     let label = LABELS.includes(v.label) ? v.label : "unverifiable";
     let summary = v.summary ?? "";
+    let softened = false;
 
-    if (used.size === 0 && label !== "opinion") label = "unverifiable";
+    if (supporting.length + risks.length === 0 && label !== "opinion") label = "unverifiable";
 
-    if (NEGATIVE.includes(label) && confidence < MIN_NEGATIVE_CONFIDENCE) {
+    const minConfidence = label === "not_supported" ? MIN_NOT_SUPPORTED_CONFIDENCE : MIN_MISLEADING_CONFIDENCE;
+    if (NEGATIVE.includes(label) && confidence < minConfidence) {
       label = "unverifiable";
       summary = `${summary} The evidence is not strong enough to call this claim wrong or misleading.`.trim();
+      softened = true;
+    }
+
+    const future = findWord(claim.quote, FUTURE_WORDS) || base.period === "future";
+    if (label === "not_supported" && future) {
+      label = "unverifiable";
+      summary = "This claim is about the future, so past data cannot prove it wrong yet. Check the risks the sources mention.";
+      supporting = [];
+      softened = true;
     }
 
     const relative = findWord(claim.quote, RELATIVE_TIME);
     if (NEGATIVE.includes(label) && (relative || base.period === "unclear")) {
       label = "unverifiable";
-      summary = `The quote uses a relative time${relative ? ` ("${relative}")` : ""}, so the exact period it refers to is unclear. We don't rate it as wrong without knowing the period.`;
+      summary = `The quote uses a relative reference${relative ? ` ("${relative}")` : ""}, so the exact period it refers to is unclear. We don't rate it as wrong without knowing the period.`;
+      supporting = [];
+      risks = [];
+      softened = true;
     }
 
     const strong = findWord(claim.quote, ABSOLUTE_WORDS);
-    if (strong && (label === "supported" || label === "historically_supported")) {
+    if (!softened && strong && (label === "supported" || label === "historically_supported")) {
       label = "missing_context";
       summary = `${summary} The data backs the general idea, but the word "${strong}" goes further than the evidence.`.trim();
     }
+
+    const used = new Set([...supporting, ...risks].map((p) => p.source));
 
     return {
       ...base,

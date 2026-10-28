@@ -46,18 +46,21 @@ const CRYPTO = [
 
 function candidates(raw: string) {
   const s = String(raw ?? "").trim().toUpperCase().replace(/^\$/, "");
+  const plain = s.replace(/^\^/, "");
   const list: string[] = [];
   const add = (x: string) => {
     if (x && !list.includes(x)) list.push(x);
   };
 
   if (ALIASES[s]) add(ALIASES[s]);
-  const bare = s.replace(/-USD$|USDT$|USD$/, "");
+  if (ALIASES[plain]) add(ALIASES[plain]);
+  const bare = plain.replace(/[-/]?USDT?$/, "");
   if (CRYPTO.includes(bare)) add(`${bare}-USD`);
   add(s);
-  if (!s.startsWith("^") && !s.includes("-") && !s.includes("=")) {
-    add(`^${s}`);
-    add(`${s}-USD`);
+  if (plain !== s) add(plain);
+  if (!plain.includes("-") && !plain.includes("=")) {
+    add(`^${plain}`);
+    add(`${plain}-USD`);
   }
   return list;
 }
