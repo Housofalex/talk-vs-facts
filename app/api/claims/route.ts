@@ -81,6 +81,23 @@ const ABSOLUTE_WORDS = [
   "definitely",
 ];
 
+const RELATIVE_TIME = [
+  "this year",
+  "last year",
+  "next year",
+  "this time period",
+  "this period",
+  "during this time",
+  "right now",
+  "these days",
+  "today",
+  "this month",
+  "last month",
+  "recently",
+  "at the moment",
+  "currently",
+];
+
 type Claim = { claim: string; quote: string; type?: string; period?: string; queries: string[] };
 type Source = { id: string; title: string; url: string; content: string };
 type Point = { text: string; source: string };
@@ -118,9 +135,9 @@ function quoteIsReal(quote: string, transcript: string) {
   return total > 0 && found / total >= 0.6;
 }
 
-function findAbsolute(text: string) {
+function findWord(text: string, words: string[]) {
   const lower = text.toLowerCase().replace(/’/g, "'");
-  return ABSOLUTE_WORDS.find((w) => lower.includes(w)) ?? null;
+  return words.find((w) => lower.includes(w)) ?? null;
 }
 
 async function ask(model: string, system: string, user: string, noThink: boolean) {
@@ -213,10 +230,10 @@ Skip completely:
 - pure opinions, hype, jokes, motivation, ads
 For each claim return:
 - claim: one short sentence that says EXACTLY what the quote says. Stay as close to the speaker's own words as possible. Never soften or strengthen it. Never turn a personal plan into general advice. If the speaker said impossible, always, never, guaranteed, like clockwork or cannot lose, that word MUST appear in the claim. Do not add numbers the speaker did not say.
-- period: the real years the claim is about. Turn words like "this year", "this time period" or "now" into actual years using the context of the transcript. If no time is mentioned, use "long term".
+- period: the real years the claim is about. Speakers often tell stories about the past, like a market crash years ago. In a story, "this year" means the year of that story, not the year the video was published. Use the surrounding sentences to find the real year. If you cannot tell for sure, use "unclear". If no time is mentioned at all, use "long term".
 - quote: copy the exact words from the transcript, word for word, max 30 words. The quote alone must clearly contain the claim.
 - type: one of statistic, calculation, economic_fact, general
-- queries: exactly 2 web search queries that include the period, the first to find official data that checks the claim, the second to find risks or counter evidence
+- queries: exactly 2 web search queries that include the period if known, the first to find official data that checks the claim, the second to find risks or counter evidence
 Return ONLY JSON: {"claims":[{"claim":"","period":"","quote":"","type":"","queries":["",""]}]}
 If there are no checkable claims return {"claims":[]}.`;
 
@@ -233,6 +250,7 @@ Labels:
 - unverifiable: the sources do not directly address the claim or the period
 - opinion: a value statement or personal belief that cannot be checked with data
 Strict rules:
+- If the PERIOD is "unclear", or the quote may be part of a story about a different time, never use not_supported or misleading. Use unverifiable.
 - Sources about a different year, period, market or type of investing than the claim do not count as evidence. If no source matches, use unverifiable.
 - Small rounding or slight exaggeration of a number (for example saying "half" when the data says "nearly half" or 40%) is missing_context, not misleading.
 - If the quote uses absolute words (always, never, impossible, guaranteed, like clockwork, cannot lose) and the sources show exceptions or big year to year swings, use missing_context or misleading, never supported.
@@ -293,7 +311,13 @@ async function checkClaim(claim: Claim, videoDate: string) {
       summary = `${summary} The evidence is not strong enough to call this claim wrong or misleading.`.trim();
     }
 
-    const strong = findAbsolute(claim.quote);
+    const relative = findWord(claim.quote, RELATIVE_TIME);
+    if (NEGATIVE.includes(label) && (relative || base.period === "unclear")) {
+      label = "unverifiable";
+      summary = `The quote uses a relative time${relative ? ` ("${relative}")` : ""}, so the exact period it refers to is unclear. We don't rate it as wrong without knowing the period.`;
+    }
+
+    const strong = findWord(claim.quote, ABSOLUTE_WORDS);
     if (strong && (label === "supported" || label === "historically_supported")) {
       label = "missing_context";
       summary = `${summary} The data backs the general idea, but the word "${strong}" goes further than the evidence.`.trim();
