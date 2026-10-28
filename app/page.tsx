@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Newsreader, IBM_Plex_Sans } from "next/font/google";
 import "./talk.css";
 
@@ -154,7 +154,59 @@ function priceLine(results: Result[], correct: number, finished: number) {
   return `${results.length} price ${results.length === 1 ? "call was" : "calls were"} found, but none can be scored yet.`;
 }
 
+function useCountUp(target: number | null) {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    if (target == null) return;
+    let frame = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / 900, 1);
+      setValue(Math.round(target * (1 - Math.pow(1 - t, 3))));
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target]);
+  return value;
+}
+
+function HeroChart() {
+  const facts =
+    "M20 210 L70 196 L115 204 L165 172 L215 184 L265 146 L310 162 L360 128 L410 170 L460 150 L515 158 L565 118 L615 134 L665 104 L715 120 L780 96";
+  return (
+    <svg viewBox="0 0 800 260" className="heroChart" role="img" aria-label="What was said versus what happened">
+      <defs>
+        <linearGradient id="factsFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--green)" stopOpacity="0.28" />
+          <stop offset="100%" stopColor="var(--green)" stopOpacity="0" />
+        </linearGradient>
+        <clipPath id="reveal">
+          <rect className="revealRect" x="0" y="0" width="800" height="260" />
+        </clipPath>
+      </defs>
+      {[50, 100, 150, 200].map((y) => (
+        <line key={y} x1="0" x2="800" y1={y} y2={y} className="gridLine" />
+      ))}
+      <g clipPath="url(#reveal)">
+        <path d={`${facts} L780 260 L20 260 Z`} fill="url(#factsFill)" />
+        <path d="M20 210 C 260 180, 520 90, 780 22" className="talkLine" />
+        <path d={facts} className="factsLine" />
+      </g>
+      <circle cx="780" cy="22" r="5" className="talkDot" />
+      <circle cx="780" cy="96" r="5" className="factsDot" />
+      <text x="770" y="16" className="chartLabel talkLabel" textAnchor="end">
+        What was said
+      </text>
+      <text x="770" y="88" className="chartLabel factsLabel" textAnchor="end">
+        What really happened
+      </text>
+    </svg>
+  );
+}
+
 function Donut({ groups, total }: { groups: Record<string, number>; total: number }) {
+  const shown = useCountUp(total);
   const r = 54;
   const c = 2 * Math.PI * r;
   const parts = GROUPS.filter((g) => groups[g.key] > 0);
@@ -176,7 +228,7 @@ function Donut({ groups, total }: { groups: Record<string, number>; total: numbe
                 className={`donutSeg ${p.tone}`}
                 strokeDasharray={`${Math.max(len - gap, 1)} ${c}`}
                 strokeDashoffset={-offset}
-                style={{ animationDelay: `${150 + i * 150}ms` }}
+                style={{ animationDelay: `${200 + i * 180}ms` }}
               />
             );
             offset += len;
@@ -184,7 +236,7 @@ function Donut({ groups, total }: { groups: Record<string, number>; total: numbe
           })}
       </g>
       <text x="70" y="72" className="donutNum">
-        {total}
+        {shown}
       </text>
       <text x="70" y="92" className="donutCaption">
         {total === 1 ? "claim" : "claims"}
@@ -300,14 +352,21 @@ export default function Home() {
   }
 
   const showIntro = !results && !busy;
+  const progress = busy ? ((step + 0.5) / STEPS.length) * 100 : 0;
 
   return (
     <main className={`page ${sans.className}`}>
+      {busy && (
+        <div className="progress" aria-hidden="true">
+          <div className="progressFill" style={{ width: `${progress}%` }} />
+        </div>
+      )}
+
       <div className="inner">
         <h1 className="brand">
           <span className={`talk ${serif.className}`}>Talk</span>
           <span className="vs">vs</span>
-          <span>Facts</span>
+          <span className="facts">Facts</span>
         </h1>
         <p className="lead">
           Paste a finance video. We check what was said against real market data and trusted sources.
@@ -352,13 +411,16 @@ export default function Home() {
 
         {showIntro && (
           <section className="how">
+            <div className="chartCard">
+              <HeroChart />
+            </div>
             <p className={`howText ${serif.className}`}>
               Most finance videos are not lies, and not proof either. They are claims. Some hold up, some leave out
               the risks, some go further than the data. We show you which is which, with sources.
             </p>
             <ol className="howSteps">
               {HOW.map((h, i) => (
-                <li key={h.title}>
+                <li key={h.title} style={{ animationDelay: `${1200 + i * 120}ms` }}>
                   <div className="howNum">{i + 1}</div>
                   <div className="howTitle">{h.title}</div>
                   <p className="howBody">{h.body}</p>
@@ -430,7 +492,7 @@ export default function Home() {
                   const l = CLAIM_LABELS[c.label] ?? CLAIM_LABELS.unverifiable;
                   const showConfidence = l.group !== "unclear" && c.confidence > 0;
                   return (
-                    <article key={`c${i}`} className="row">
+                    <article key={`c${i}`} className="row" style={{ animationDelay: `${i * 90}ms` }}>
                       <div className="rowHead">
                         <div>
                           <div className="asset">{c.claim}</div>
@@ -506,7 +568,7 @@ export default function Home() {
                 {results.map((r, i) => {
                   const v = VERDICTS[r.verdict ?? ""] ?? { label: "No price data", tone: "muted" };
                   return (
-                    <article key={i} className="row">
+                    <article key={i} className="row" style={{ animationDelay: `${(claims.length + i) * 90}ms` }}>
                       <div className="rowHead">
                         <div>
                           <div className="asset">{r.asset}</div>
