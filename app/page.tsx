@@ -41,6 +41,8 @@ type Video = { title: string; channel: string; video_date: string };
 
 const EXAMPLES = [
   { label: "Tom Nash, investing plan", url: "https://www.youtube.com/watch?v=lgT2G1jpt_w" },
+  { label: "Tim Draper, Bitcoin $255K", url: "https://www.youtube.com/watch?v=aYylYms56zs" },
+  { label: "DataDash, road to $200K", url: "https://www.youtube.com/watch?v=qTH1ezH3Q2c" },
   { label: "Mark Tilbury, investing for beginners", url: "https://www.youtube.com/watch?v=8Ij7A1VCB7I" },
 ];
 
@@ -119,6 +121,13 @@ function callText(r: Result) {
   return `${dir}${target}${by}`;
 }
 
+function periodText(p?: string) {
+  if (!p || p === "long term") return "Long term";
+  if (p === "future") return "About the future";
+  if (p === "unclear") return "Time period unclear";
+  return `About ${p}`;
+}
+
 function countGroups(claims: Claim[]) {
   const g: Record<string, number> = { holds: 0, context: 0, overstated: 0, unclear: 0 };
   for (const c of claims) {
@@ -149,9 +158,12 @@ function countLine(g: Record<string, number>, total: number) {
 }
 
 function priceLine(results: Result[], correct: number, finished: number) {
-  if (results.length === 0) return "No price predictions with a clear target were found.";
+  const real = results.filter((r) => r.verdict !== "not_a_prediction");
+  if (real.length === 0) return "No price predictions with a clear target were found.";
   if (finished > 0) return `Price calls: ${correct} of ${finished} finished ${finished === 1 ? "call" : "calls"} came true.`;
-  return `${results.length} price ${results.length === 1 ? "call was" : "calls were"} found, but none can be scored yet.`;
+  return `${real.length} price ${real.length === 1 ? "call was" : "calls were"} found, but ${
+    real.length === 1 ? "it can't" : "none can"
+  } be scored yet, because no deadline was given or it hasn't passed.`;
 }
 
 function useCountUp(target: number | null) {
@@ -497,7 +509,7 @@ export default function Home() {
                         <div>
                           <div className="asset">{c.claim}</div>
                           <div className="call">
-                            {c.period && c.period !== "long term" ? `About ${c.period}` : "Long term"}
+                            {periodText(c.period)}
                             {showConfidence ? `, confidence ${Math.round(c.confidence * 100)}%` : ""}
                           </div>
                         </div>
